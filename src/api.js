@@ -90,6 +90,12 @@ export function updatePost(postId, post) {
   });
 }
 
+export function deletePost(postId) {
+  return request(`/posts/${postId}`, {
+    method: "DELETE",
+  });
+}
+
 export function uploadEditorAsset(file) {
   const formData = new FormData();
   formData.append("image", file);
