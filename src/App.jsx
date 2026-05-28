@@ -2,24 +2,14 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import "./App.css";
 import HomePage from "./components/HomePage";
 import Admin from "./components/Admin";
+import Editor from "./components/Editor";
 import Login from "./components/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
-import { getAuthState } from "./auth";
-
-function RootRedirect() {
-  return (
-    <Navigate
-      to={getAuthState().isAuthenticated ? "/admin" : "/login"}
-      replace
-    />
-  );
-}
 
 function App() {
   return (
     <>
       <Routes>
-        <Route path="/admin" element={<RootRedirect />} />
         <Route path="/" element={<HomePage />} />
         <Route path="/login" element={<Login />} />
         <Route
@@ -27,6 +17,22 @@ function App() {
           element={
             <ProtectedRoute>
               <Admin />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/editor"
+          element={
+            <ProtectedRoute>
+              <Editor />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/editor/:postId"
+          element={
+            <ProtectedRoute>
+              <Editor />
             </ProtectedRoute>
           }
         />
