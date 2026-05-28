@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { createDemoJwt, getAuthState, saveAuthSession } from "../auth";
+import { loginAdmin } from "../api";
+import { getAuthState, saveAuthSession } from "../auth";
 
 const fallbackMessages = {
   "invalid-session": "Your session is missing or expired. Please log in again.",
@@ -31,7 +32,7 @@ function Login() {
     }));
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
     setError("");
 
@@ -40,18 +41,22 @@ function Login() {
       return;
     }
 
-    const token = createDemoJwt(credentials.username.trim());
-    const wasSaved = saveAuthSession({
-      token,
-      user: { username: credentials.username.trim(), role: "admin" },
-    });
+    try {
+      const authResult = await loginAdmin({
+        username: credentials.username.trim(),
+        password: credentials.password,
+      });
+      const wasSaved = saveAuthSession(authResult);
 
-    if (!wasSaved) {
-      setError("Login failed because the JWT token could not be validated.");
-      return;
+      if (!wasSaved) {
+        setError("Login failed because the JWT token could not be validated.");
+        return;
+      }
+
+      navigate(from, { replace: true });
+    } catch (error) {
+      setError(error.message);
     }
-
-    navigate(from, { replace: true });
   }
 
   return (
