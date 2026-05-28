@@ -7,7 +7,14 @@ import Image from "@tiptap/extension-image";
 import LinkExtension from "@tiptap/extension-link";
 import StarterKit from "@tiptap/starter-kit";
 import { all, createLowlight } from "lowlight";
-import { createPost, getEditorPost, toApiUrl, updatePost, uploadEditorAsset } from "../api";
+import {
+  createPost,
+  deletePost,
+  getEditorPost,
+  toApiUrl,
+  updatePost,
+  uploadEditorAsset,
+} from "../api";
 import { deleteStoredPost, getStoredPost } from "../blogStore";
 
 const lowlight = createLowlight(all);
@@ -246,10 +253,25 @@ function Editor() {
     }
   }
 
-  function removePost() {
+  async function removePost() {
     if (!savedPostId) return;
-    deleteStoredPost(savedPostId);
-    navigate("/admin");
+    setIsSaving(true);
+    setSaveError("");
+    setSaveMessage("");
+
+    try {
+      if (isMongoObjectId(savedPostId)) {
+        await deletePost(savedPostId);
+      } else {
+        deleteStoredPost(savedPostId);
+      }
+
+      navigate("/admin");
+    } catch (requestError) {
+      setSaveError(requestError.message);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   const toolbarItems = [
@@ -442,7 +464,12 @@ function Editor() {
           </div>
 
           {savedPostId ? (
-            <button type="button" className="danger-action" onClick={removePost}>
+            <button
+              type="button"
+              className="danger-action"
+              disabled={isSaving || isUploadingAsset}
+              onClick={removePost}
+            >
               Delete post
             </button>
           ) : null}
