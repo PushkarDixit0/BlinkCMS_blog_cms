@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Dialog, FileUpload } from "@skeletonlabs/skeleton-react";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { Dialog } from "@skeletonlabs/skeleton-react";
+import { Mark, mergeAttributes } from "@tiptap/core";
+import {
+  EditorContent,
+  NodeViewWrapper,
+  ReactNodeViewRenderer,
+  useEditor,
+} from "@tiptap/react";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import Image from "@tiptap/extension-image";
-import LinkExtension from "@tiptap/extension-link";
 import StarterKit from "@tiptap/starter-kit";
 import { all, createLowlight } from "lowlight";
 import {
@@ -23,19 +28,154 @@ const blankContent = {
   content: [{ type: "paragraph" }],
 };
 
-function slugify(value) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)+/g, "");
+const fontSizeOptions = Array.from({ length: 10 }, (_, index) =>
+  String((index + 1) * 10),
+);
+
+function getImageDimension(value) {
+  if (!value) return null;
+  const match = String(value).match(/\d+/);
+  return match ? match[0] : null;
 }
 
-function plainTextFromHtml(html) {
-  const element = document.createElement("div");
-  element.innerHTML = html;
-  return element.textContent || element.innerText || "";
+function ResizableImageView({ node, selected, updateAttributes }) {
+  const imageRef = useRef(null);
+
+  function startResize(event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const image = imageRef.current;
+    if (!image) return;
+
+    const startX = event.clientX;
+    const startWidth = image.offsetWidth;
+    const startHeight = image.offsetHeight;
+    const aspectRatio = startHeight ? startWidth / startHeight : 1;
+
+    function resize(pointerEvent) {
+      const nextWidth = Math.max(
+        80,
+        Math.round(startWidth + pointerEvent.clientX - startX),
+      );
+      const nextHeight = Math.round(nextWidth / aspectRatio);
+
+      updateAttributes({
+        width: String(nextWidth),
+        height: String(nextHeight),
+      });
+    }
+
+    function stopResize() {
+      window.removeEventListener("pointermove", resize);
+      window.removeEventListener("pointerup", stopResize);
+    }
+
+    window.addEventListener("pointermove", resize);
+    window.addEventListener("pointerup", stopResize, { once: true });
+  }
+
+  return (
+    <NodeViewWrapper
+      className={`resizable-image${selected ? " is-selected" : ""}`}
+      style={{ width: node.attrs.width ? `${node.attrs.width}px` : undefined }}
+    >
+      <img
+        ref={imageRef}
+        src={node.attrs.src}
+        alt={node.attrs.alt || ""}
+        title={node.attrs.title || undefined}
+        width={node.attrs.width || undefined}
+        height={node.attrs.height || undefined}
+        style={{ width: node.attrs.width ? "100%" : undefined }}
+        draggable="false"
+      />
+      <button
+        type="button"
+        className="image-resize-handle"
+        aria-label="Resize image"
+        onPointerDown={startResize}
+      />
+    </NodeViewWrapper>
+  );
 }
+
+const ResizableImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      width: {
+        default: null,
+        parseHTML: (element) =>
+          getImageDimension(element.getAttribute("width")) ||
+          getImageDimension(element.style.width),
+        renderHTML: (attributes) =>
+          attributes.width ? { width: attributes.width } : {},
+      },
+      height: {
+        default: null,
+        parseHTML: (element) =>
+          getImageDimension(element.getAttribute("height")) ||
+          getImageDimension(element.style.height),
+        renderHTML: (attributes) =>
+          attributes.height ? { height: attributes.height } : {},
+      },
+      style: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("style"),
+        renderHTML: () => ({}),
+      },
+    };
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const attributes = { ...HTMLAttributes };
+    delete attributes.style;
+
+    return ["img", mergeAttributes(attributes)];
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(ResizableImageView);
+  },
+});
+
+const FontSize = Mark.create({
+  name: "fontSize",
+
+  addAttributes() {
+    return {
+      size: {
+        default: null,
+        parseHTML: (element) =>
+          element.style.fontSize?.replace("%", "") || null,
+        renderHTML: (attributes) =>
+          attributes.size ? { style: `font-size: ${attributes.size}%` } : {},
+      },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: "span[style*=font-size]" }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["span", HTMLAttributes, 0];
+  },
+
+  addCommands() {
+    return {
+      setFontSize:
+        (size) =>
+        ({ chain }) =>
+          chain().setMark(this.name, { size }).run(),
+      unsetFontSize:
+        () =>
+        ({ chain }) =>
+          chain().unsetMark(this.name).run(),
+    };
+  },
+});
 
 function isMongoObjectId(value) {
   return /^[a-f\d]{24}$/i.test(value || "");
@@ -46,38 +186,38 @@ function Editor() {
   const location = useLocation();
   const { postId } = useParams();
   const initialPost = useMemo(
-    () => (postId ? getStoredPost(postId) || location.state?.post || null : null),
+    () =>
+      postId ? getStoredPost(postId) || location.state?.post || null : null,
     [location.state, postId],
   );
   const [title, setTitle] = useState(initialPost?.title || "");
-  const [slug, setSlug] = useState(initialPost?.slug || "");
-  const [excerpt, setExcerpt] = useState(initialPost?.excerpt || "");
   const [status, setStatus] = useState(initialPost?.status || "draft");
   const [tags, setTags] = useState(initialPost?.tags || []);
   const [tagDraft, setTagDraft] = useState("");
-  const [comments, setComments] = useState(initialPost?.comments || []);
-  const [commentDraft, setCommentDraft] = useState("");
+  const [fontSize, setFontSize] = useState("");
   const [savedPostId, setSavedPostId] = useState(initialPost?._id || "");
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAsset, setIsUploadingAsset] = useState(false);
-  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [codeDialogOpen, setCodeDialogOpen] = useState(false);
-  const [linkUrl, setLinkUrl] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("javascript");
   const [codeText, setCodeText] = useState("");
+  const uploadInputRef = useRef(null);
+  const activeUploadKeysRef = useRef(new Set());
+  const recentUploadKeysRef = useRef(new Set());
 
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
+        heading: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
         codeBlock: false,
       }),
-      LinkExtension.configure({
-        openOnClick: false,
-        autolink: true,
-      }),
-      Image.configure({
+      FontSize,
+      ResizableImage.configure({
         allowBase64: false,
       }),
       CodeBlockLowlight.configure({
@@ -109,13 +249,12 @@ function Editor() {
         if (!isCurrent || !post) return;
 
         setTitle(post.title || "");
-        setSlug(post.slug || "");
-        setExcerpt(post.excerpt || "");
         setStatus(post.status || "draft");
         setTags(post.tags || []);
-        setComments(post.comments || []);
         setSavedPostId(post._id || "");
-        editor.commands.setContent(post.contentJson || post.content || blankContent);
+        editor.commands.setContent(
+          post.contentJson || post.content || blankContent,
+        );
       })
       .catch((requestError) => {
         if (isCurrent) {
@@ -133,14 +272,11 @@ function Editor() {
     return {
       _id: savedPostId || undefined,
       title: title.trim() || "Untitled post",
-      slug: slugify(slug || title || "untitled-post"),
-      excerpt: excerpt.trim() || plainTextFromHtml(html).slice(0, 160),
       content: html,
       contentJson: editor?.getJSON() || blankContent,
       status: nextStatus,
       author: "Admin",
       tags,
-      comments,
     };
   }
 
@@ -183,31 +319,15 @@ function Editor() {
     setTagDraft("");
   }
 
-  function addComment() {
-    const body = commentDraft.trim();
-    if (!body) return;
-    setComments((currentComments) => [
-      ...currentComments,
-      {
-        id: crypto.randomUUID(),
-        author: "Admin",
-        body,
-        createdAt: new Date().toISOString(),
-        approved: true,
-      },
-    ]);
-    setCommentDraft("");
-  }
-
-  function applyLink() {
+  function applyFontSize(size) {
+    setFontSize(size);
     if (!editor) return;
-    if (linkUrl.trim()) {
-      editor.chain().focus().extendMarkRange("link").setLink({ href: linkUrl }).run();
+
+    if (size) {
+      editor.chain().focus().setFontSize(size).run();
     } else {
-      editor.chain().focus().unsetLink().run();
+      editor.chain().focus().unsetFontSize().run();
     }
-    setLinkDialogOpen(false);
-    setLinkUrl("");
   }
 
   function insertCodeBlock() {
@@ -226,12 +346,24 @@ function Editor() {
   }
 
   async function insertUploadedImages(files) {
+    if (!editor) return;
+
     setSaveError("");
     setIsUploadingAsset(true);
 
     try {
       for (const file of Array.from(files || [])) {
         if (!file.type.startsWith("image/")) continue;
+
+        const uploadKey = `${file.name}:${file.size}:${file.lastModified}`;
+        if (
+          activeUploadKeysRef.current.has(uploadKey) ||
+          recentUploadKeysRef.current.has(uploadKey)
+        ) {
+          continue;
+        }
+
+        activeUploadKeysRef.current.add(uploadKey);
 
         const data = await uploadEditorAsset(file);
         const assetUrl = data?.asset?.url;
@@ -241,15 +373,25 @@ function Editor() {
         }
 
         editor
-          ?.chain()
+          .chain()
           .focus()
           .setImage({ src: toApiUrl(assetUrl), alt: file.name })
           .run();
+
+        activeUploadKeysRef.current.delete(uploadKey);
+        recentUploadKeysRef.current.add(uploadKey);
+        window.setTimeout(() => {
+          recentUploadKeysRef.current.delete(uploadKey);
+        }, 1500);
       }
     } catch (requestError) {
       setSaveError(requestError.message);
     } finally {
       setIsUploadingAsset(false);
+      activeUploadKeysRef.current.clear();
+      if (uploadInputRef.current) {
+        uploadInputRef.current.value = "";
+      }
     }
   }
 
@@ -275,14 +417,14 @@ function Editor() {
   }
 
   const toolbarItems = [
-    ["H1", () => editor?.chain().focus().toggleHeading({ level: 1 }).run(), "heading", { level: 1 }],
-    ["H2", () => editor?.chain().focus().toggleHeading({ level: 2 }).run(), "heading", { level: 2 }],
     ["B", () => editor?.chain().focus().toggleBold().run(), "bold"],
     ["I", () => editor?.chain().focus().toggleItalic().run(), "italic"],
     ["U", () => editor?.chain().focus().toggleUnderline().run(), "underline"],
-    ["List", () => editor?.chain().focus().toggleBulletList().run(), "bulletList"],
-    ["1.", () => editor?.chain().focus().toggleOrderedList().run(), "orderedList"],
-    ["Quote", () => editor?.chain().focus().toggleBlockquote().run(), "blockquote"],
+    [
+      "Quote",
+      () => editor?.chain().focus().toggleBlockquote().run(),
+      "blockquote",
+    ],
   ];
 
   return (
@@ -293,7 +435,9 @@ function Editor() {
           <h1>Blog Editor</h1>
         </div>
         <div className="editor-actions">
-          {saveMessage ? <span className="save-message">{saveMessage}</span> : null}
+          {saveMessage ? (
+            <span className="save-message">{saveMessage}</span>
+          ) : null}
           {saveError ? <span className="form-error">{saveError}</span> : null}
           <button
             type="button"
@@ -321,43 +465,56 @@ function Editor() {
           <input
             className="title-input"
             value={title}
-            onChange={(event) => {
-              setTitle(event.target.value);
-              if (!slug) {
-                setSlug(slugify(event.target.value));
-              }
-            }}
+            onChange={(event) => setTitle(event.target.value)}
             placeholder="Post title"
           />
 
           <div className="editor-toolbar" aria-label="Editor formatting">
+            <select
+              aria-label="Font size"
+              value={fontSize}
+              onChange={(event) => applyFontSize(event.target.value)}
+            >
+              <option value="">Text size</option>
+              {fontSizeOptions.map((size) => (
+                <option key={size} value={size}>
+                  {size}%
+                </option>
+              ))}
+            </select>
             {toolbarItems.map(([label, action, activeName, activeAttrs]) => (
               <button
                 type="button"
                 key={label}
-                className={editor?.isActive(activeName, activeAttrs) ? "is-active" : ""}
+                className={
+                  editor?.isActive(activeName, activeAttrs) ? "is-active" : ""
+                }
                 onClick={action}
               >
                 {label}
               </button>
             ))}
-            <button type="button" onClick={() => setLinkDialogOpen(true)}>
-              Link
-            </button>
             <button type="button" onClick={() => setCodeDialogOpen(true)}>
               Code
             </button>
-            <FileUpload
+            <button
+              type="button"
+              className="upload-trigger"
+              disabled={isUploadingAsset}
+              onClick={() => uploadInputRef.current?.click()}
+            >
+              {isUploadingAsset ? "Uploading..." : "Upload image"}
+            </button>
+            <input
+              ref={uploadInputRef}
+              className="file-input"
+              type="file"
               accept="image/*"
               multiple
-            >
-              <FileUpload.Trigger className="upload-trigger">Upload image</FileUpload.Trigger>
-              <FileUpload.HiddenInput
-                accept="image/*"
-                multiple
-                onChange={(event) => insertUploadedImages(event.currentTarget.files)}
-              />
-            </FileUpload>
+              onChange={(event) =>
+                insertUploadedImages(event.currentTarget.files)
+              }
+            />
           </div>
 
           <EditorContent editor={editor} />
@@ -366,24 +523,13 @@ function Editor() {
         <aside className="editor-sidebar">
           <label>
             Status
-            <select value={status} onChange={(event) => setStatus(event.target.value)}>
+            <select
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+            >
               <option value="draft">Draft</option>
               <option value="published">Published</option>
             </select>
-          </label>
-
-          <label>
-            Slug
-            <input value={slug} onChange={(event) => setSlug(event.target.value)} />
-          </label>
-
-          <label>
-            Excerpt
-            <textarea
-              rows="4"
-              value={excerpt}
-              onChange={(event) => setExcerpt(event.target.value)}
-            />
           </label>
 
           <div className="metadata-group">
@@ -409,56 +555,14 @@ function Editor() {
                 <button
                   type="button"
                   key={tag}
-                  onClick={() => setTags((currentTags) => currentTags.filter((item) => item !== tag))}
+                  onClick={() =>
+                    setTags((currentTags) =>
+                      currentTags.filter((item) => item !== tag),
+                    )
+                  }
                 >
                   {tag} x
                 </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="metadata-group">
-            <span>Comments</span>
-            <textarea
-              rows="3"
-              value={commentDraft}
-              onChange={(event) => setCommentDraft(event.target.value)}
-              placeholder="Add or moderate a note"
-            />
-            <button type="button" className="secondary-action" onClick={addComment}>
-              Add comment
-            </button>
-            <div className="comment-list">
-              {comments.map((comment) => (
-                <article key={comment.id}>
-                  <p>{comment.body}</p>
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setComments((currentComments) =>
-                          currentComments.map((item) =>
-                            item.id === comment.id
-                              ? { ...item, approved: !item.approved }
-                              : item,
-                          ),
-                        )
-                      }
-                    >
-                      {comment.approved ? "Approved" : "Hidden"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setComments((currentComments) =>
-                          currentComments.filter((item) => item.id !== comment.id),
-                        )
-                      }
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </article>
               ))}
             </div>
           </div>
@@ -476,38 +580,24 @@ function Editor() {
         </aside>
       </section>
 
-      <Dialog open={linkDialogOpen} onOpenChange={(details) => setLinkDialogOpen(details.open)}>
+      <Dialog
+        open={codeDialogOpen}
+        onOpenChange={(details) => setCodeDialogOpen(details.open)}
+      >
         <Dialog.Backdrop className="dialog-backdrop" />
         <Dialog.Positioner className="dialog-positioner">
           <Dialog.Content className="dialog-content">
-            <Dialog.Title className="dialog-title">Edit link</Dialog.Title>
+            <Dialog.Title className="dialog-title">
+              Insert fenced code
+            </Dialog.Title>
             <Dialog.Description className="dialog-description">
-              Add a URL to the current selection, or leave it blank to remove the link.
+              The language value is stored on the code block for syntax-style
+              fenced snippets.
             </Dialog.Description>
-            <input
-              value={linkUrl}
-              onChange={(event) => setLinkUrl(event.target.value)}
-              placeholder="https://example.com"
-            />
-            <div className="dialog-actions">
-              <Dialog.CloseTrigger className="secondary-action">Cancel</Dialog.CloseTrigger>
-              <button type="button" onClick={applyLink}>
-                Apply
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Positioner>
-      </Dialog>
-
-      <Dialog open={codeDialogOpen} onOpenChange={(details) => setCodeDialogOpen(details.open)}>
-        <Dialog.Backdrop className="dialog-backdrop" />
-        <Dialog.Positioner className="dialog-positioner">
-          <Dialog.Content className="dialog-content">
-            <Dialog.Title className="dialog-title">Insert fenced code</Dialog.Title>
-            <Dialog.Description className="dialog-description">
-              The language value is stored on the code block for syntax-style fenced snippets.
-            </Dialog.Description>
-            <select value={codeLanguage} onChange={(event) => setCodeLanguage(event.target.value)}>
+            <select
+              value={codeLanguage}
+              onChange={(event) => setCodeLanguage(event.target.value)}
+            >
               <option value="javascript">javascript</option>
               <option value="jsx">jsx</option>
               <option value="css">css</option>
@@ -522,7 +612,9 @@ function Editor() {
               placeholder="code here"
             />
             <div className="dialog-actions">
-              <Dialog.CloseTrigger className="secondary-action">Cancel</Dialog.CloseTrigger>
+              <Dialog.CloseTrigger className="secondary-action">
+                Cancel
+              </Dialog.CloseTrigger>
               <button type="button" onClick={insertCodeBlock}>
                 Insert
               </button>

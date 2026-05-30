@@ -68,8 +68,36 @@ export function getHomePosts() {
   return request("/home");
 }
 
+export function getPostComments(postId) {
+  return request(`/posts/${postId}/comments`);
+}
+
+export function createComment(postId, comment) {
+  return request(`/posts/${postId}/comments`, {
+    method: "POST",
+    body: JSON.stringify(comment),
+  });
+}
+
 export function getAdminDashboard() {
   return request("/admin");
+}
+
+export function getAdminComments() {
+  return request("/admin/comments");
+}
+
+export function updateAdminComment(commentId, status) {
+  return request(`/admin/comments/${commentId}`, {
+    method: "PUT",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function deleteAdminComment(commentId) {
+  return request(`/admin/comments/${commentId}`, {
+    method: "DELETE",
+  });
 }
 
 export function getEditorPost(postId) {
