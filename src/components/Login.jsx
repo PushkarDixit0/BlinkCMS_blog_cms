@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { loginAdmin } from "../api";
-import { getAuthState, saveAuthSession } from "../auth";
+import { getAuthState } from "../auth";
+import { useLogin } from "../hooks/useAuth";
+import { loginFormSchema } from "../schemas/auth.schema";
 
 const fallbackMessages = {
   "invalid-session": "Your session is missing or expired. Please log in again.",
@@ -12,56 +14,33 @@ function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const authState = getAuthState();
-  const [credentials, setCredentials] = useState({
-    username: "",
-    password: "",
+  const loginMutation = useLogin();
+  const {
+    formState: { errors },
+    handleSubmit,
+    register,
+  } = useForm({
+    resolver: zodResolver(loginFormSchema),
+    defaultValues: {
+      username: "",
+      password: "",
+    },
   });
-  const [error, setError] = useState("");
   const from = location.state?.from?.pathname || "/admin";
 
   if (authState.isAuthenticated) {
     return <Navigate to="/admin" replace />;
   }
 
-  function handleChange(event) {
-    const { name, value } = event.target;
-
-    setCredentials((currentCredentials) => ({
-      ...currentCredentials,
-      [name]: value,
-    }));
-  }
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-    setError("");
-
-    if (!credentials.username.trim() || !credentials.password.trim()) {
-      setError("Enter both username and password.");
-      return;
-    }
-
-    try {
-      const authResult = await loginAdmin({
-        username: credentials.username.trim(),
-        password: credentials.password,
-      });
-      const wasSaved = saveAuthSession(authResult);
-
-      if (!wasSaved) {
-        setError("Login failed because the JWT token could not be validated.");
-        return;
-      }
-
-      navigate(from, { replace: true });
-    } catch (error) {
-      setError(error.message);
-    }
+  function onSubmit(credentials) {
+    loginMutation.mutate(credentials, {
+      onSuccess: () => navigate(from, { replace: true }),
+    });
   }
 
   return (
     <main className="auth-page">
-      <form className="login-panel" onSubmit={handleSubmit}>
+      <form className="login-panel" onSubmit={handleSubmit(onSubmit)}>
         <div>
           <p className="eyebrow">Admin Access</p>
           <h1>Sign in</h1>
@@ -75,27 +54,33 @@ function Login() {
           Username
           <input
             autoComplete="username"
-            name="username"
-            onChange={handleChange}
             type="text"
-            value={credentials.username}
+            {...register("username")}
           />
+          {errors.username ? (
+            <span className="field-error">{errors.username.message}</span>
+          ) : null}
         </label>
 
         <label>
           Password
           <input
             autoComplete="current-password"
-            name="password"
-            onChange={handleChange}
             type="password"
-            value={credentials.password}
+            {...register("password")}
           />
+          {errors.password ? (
+            <span className="field-error">{errors.password.message}</span>
+          ) : null}
         </label>
 
-        {error ? <p className="form-error">{error}</p> : null}
+        {loginMutation.error ? (
+          <p className="form-error">{loginMutation.error.message}</p>
+        ) : null}
 
-        <button type="submit">Log in</button>
+        <button type="submit" disabled={loginMutation.isPending}>
+          {loginMutation.isPending ? "Logging in..." : "Log in"}
+        </button>
       </form>
     </main>
   );

@@ -263,6 +263,12 @@
   font-size: 15px;
 }
 
+.field-error {
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .admin-header {
   width: min(100%, 720px);
   display: flex;

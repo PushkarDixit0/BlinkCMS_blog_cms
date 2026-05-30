@@ -1,82 +1,76 @@
-import { useEffect, useState } from "react";
-import { createComment, getHomePosts, getPostComments } from "../api";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
 import Header from "./Header";
+import { useComments, useCreateComment } from "../hooks/useComments";
+import { usePublishedPosts } from "../hooks/usePosts";
+import { commentFormSchema } from "../schemas/comment.schema";
+
+function PublicComments({ postId }) {
+  const commentsQuery = useComments(postId);
+  const createCommentMutation = useCreateComment(postId);
+  const {
+    formState: { errors },
+    handleSubmit,
+    register,
+    reset,
+  } = useForm({
+    resolver: zodResolver(commentFormSchema),
+    defaultValues: {
+      authorName: "",
+      comment: "",
+    },
+  });
+
+  function submitComment(values) {
+    createCommentMutation.mutate(values, {
+      onSuccess: () => reset(),
+    });
+  }
+
+  const comments = commentsQuery.data?.comments || [];
+
+  return (
+    <section className="public-comments">
+      <div className="comments-heading">
+        <h3>Comments</h3>
+        <span>{comments.length}</span>
+      </div>
+      {commentsQuery.isLoading ? <p className="empty-comments">Loading comments...</p> : null}
+      {comments.length ? (
+        <div className="comment-list public-comment-list">
+          {comments.map((comment) => (
+            <article className="public-comment" key={comment._id}>
+              <p>{comment.comment}</p>
+              <span>{comment.authorName}</span>
+            </article>
+          ))}
+        </div>
+      ) : commentsQuery.isLoading ? null : (
+        <p className="empty-comments">No comments yet.</p>
+      )}
+      <form className="comment-form" onSubmit={handleSubmit(submitComment)}>
+        <input placeholder="Your name" {...register("authorName")} />
+        {errors.authorName ? (
+          <span className="field-error">{errors.authorName.message}</span>
+        ) : null}
+        <textarea rows="3" placeholder="Add a comment" {...register("comment")} />
+        {errors.comment ? (
+          <span className="field-error">{errors.comment.message}</span>
+        ) : null}
+        <button type="submit" disabled={createCommentMutation.isPending}>
+          {createCommentMutation.isPending ? "Posting..." : "Comment"}
+        </button>
+      </form>
+      {createCommentMutation.error ? (
+        <p className="form-error">{createCommentMutation.error.message}</p>
+      ) : null}
+    </section>
+  );
+}
 
 function HomePage() {
-  const [posts, setPosts] = useState([]);
-  const [commentsByPost, setCommentsByPost] = useState({});
-  const [commentForms, setCommentForms] = useState({});
-  const [error, setError] = useState("");
-  const [commentError, setCommentError] = useState("");
-  const [submittingCommentId, setSubmittingCommentId] = useState("");
-
-  useEffect(() => {
-    let isCurrent = true;
-
-    getHomePosts()
-      .then(async (data) => {
-        const nextPosts = data?.posts || [];
-        const commentsEntries = await Promise.all(
-          nextPosts.map(async (post) => {
-            const commentsData = await getPostComments(post._id);
-            return [post._id, commentsData?.comments || []];
-          }),
-        );
-
-        if (isCurrent) {
-          setPosts(nextPosts);
-          setCommentsByPost(Object.fromEntries(commentsEntries));
-        }
-      })
-      .catch((requestError) => {
-        if (isCurrent) {
-          setError(requestError.message);
-        }
-      });
-
-    return () => {
-      isCurrent = false;
-    };
-  }, []);
-
-  function updateCommentForm(postId, field, value) {
-    setCommentForms((currentForms) => ({
-      ...currentForms,
-      [postId]: {
-        authorName: "",
-        comment: "",
-        ...currentForms[postId],
-        [field]: value,
-      },
-    }));
-  }
-
-  async function submitComment(event, postId) {
-    event.preventDefault();
-    setCommentError("");
-    setSubmittingCommentId(postId);
-
-    try {
-      const form = commentForms[postId] || {};
-      const data = await createComment(postId, {
-        authorName: form.authorName,
-        comment: form.comment,
-      });
-
-      setCommentsByPost((currentComments) => ({
-        ...currentComments,
-        [postId]: [...(currentComments[postId] || []), data.comment],
-      }));
-      setCommentForms((currentForms) => ({
-        ...currentForms,
-        [postId]: { authorName: "", comment: "" },
-      }));
-    } catch (requestError) {
-      setCommentError(requestError.message);
-    } finally {
-      setSubmittingCommentId("");
-    }
-  }
+  const postsQuery = usePublishedPosts();
+  const posts = postsQuery.data?.posts || [];
 
   return (
     <>
@@ -88,7 +82,9 @@ function HomePage() {
             <h1>Blog CMS</h1>
           </div>
 
-          {error ? <p className="form-error">{error}</p> : null}
+          {postsQuery.error ? (
+            <p className="form-error">{postsQuery.error.message}</p>
+          ) : null}
 
           <div className="post-list">
             {posts.length ? (
@@ -109,71 +105,16 @@ function HomePage() {
                         ))}
                       </div>
                     ) : null}
-                    <section className="public-comments">
-                      <div className="comments-heading">
-                        <h3>Comments</h3>
-                        <span>{commentsByPost[post._id]?.length || 0}</span>
-                      </div>
-                      {commentsByPost[post._id]?.length ? (
-                        <div className="comment-list public-comment-list">
-                          {commentsByPost[post._id].map((comment) => (
-                            <article
-                              className="public-comment"
-                              key={comment._id}
-                            >
-                              <p>{comment.comment}</p>
-                              <span>{comment.authorName}</span>
-                            </article>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="empty-comments">No comments yet.</p>
-                      )}
-                      <form
-                        className="comment-form"
-                        onSubmit={(event) => submitComment(event, post._id)}
-                      >
-                        <input
-                          value={commentForms[post._id]?.authorName || ""}
-                          onChange={(event) =>
-                            updateCommentForm(
-                              post._id,
-                              "authorName",
-                              event.target.value,
-                            )
-                          }
-                          placeholder="Your name"
-                        />
-                        <textarea
-                          rows="3"
-                          value={commentForms[post._id]?.comment || ""}
-                          onChange={(event) =>
-                            updateCommentForm(
-                              post._id,
-                              "comment",
-                              event.target.value,
-                            )
-                          }
-                          placeholder="Add a comment"
-                        />
-                        <button
-                          type="submit"
-                          disabled={submittingCommentId === post._id}
-                        >
-                          {submittingCommentId === post._id
-                            ? "Posting..."
-                            : "Comment"}
-                        </button>
-                      </form>
-                    </section>
+                    <PublicComments postId={post._id} />
                   </div>
                 </article>
               ))
+            ) : postsQuery.isLoading ? (
+              <p>Loading published posts...</p>
             ) : (
               <p>No published posts yet.</p>
             )}
           </div>
-          {commentError ? <p className="form-error">{commentError}</p> : null}
         </section>
       </main>
     </>

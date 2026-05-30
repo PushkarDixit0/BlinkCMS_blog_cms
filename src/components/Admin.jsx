@@ -1,76 +1,43 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  deleteAdminComment,
-  getAdminComments,
-  getAdminDashboard,
-  updateAdminComment,
-} from "../api";
 import { clearAuthSession, getAuthState } from "../auth";
 import { getStoredPosts } from "../blogStore";
+import {
+  useAdminComments,
+  useDeleteAdminComment,
+  useUpdateAdminComment,
+} from "../hooks/useComments";
+import { useAdminDashboard } from "../hooks/usePosts";
 
 function Admin() {
   const navigate = useNavigate();
   const authState = getAuthState();
-  const [dashboard, setDashboard] = useState(null);
-  const [comments, setComments] = useState([]);
-  const [error, setError] = useState("");
+  const dashboardQuery = useAdminDashboard();
+  const commentsQuery = useAdminComments();
+  const updateCommentMutation = useUpdateAdminComment();
+  const deleteCommentMutation = useDeleteAdminComment();
   const [storedPosts] = useState(() => getStoredPosts());
-
-  useEffect(() => {
-    let isCurrent = true;
-
-    Promise.all([getAdminDashboard(), getAdminComments()])
-      .then(([dashboardData, commentsData]) => {
-        if (isCurrent) {
-          setDashboard(dashboardData);
-          setComments(commentsData?.comments || []);
-        }
-      })
-      .catch((requestError) => {
-        if (isCurrent) {
-          setError(requestError.message);
-        }
-      });
-
-    return () => {
-      isCurrent = false;
-    };
-  }, []);
 
   function handleLogout() {
     clearAuthSession();
     navigate("/login", { replace: true });
   }
 
-  async function setCommentStatus(commentId, status) {
-    setError("");
-
-    try {
-      const data = await updateAdminComment(commentId, status);
-      setComments((currentComments) =>
-        currentComments.map((comment) =>
-          comment._id === commentId ? data.comment : comment,
-        ),
-      );
-    } catch (requestError) {
-      setError(requestError.message);
-    }
+  function setCommentStatus(commentId, status) {
+    updateCommentMutation.mutate({ commentId, status });
   }
 
-  async function removeComment(commentId) {
-    setError("");
-
-    try {
-      await deleteAdminComment(commentId);
-      setComments((currentComments) =>
-        currentComments.filter((comment) => comment._id !== commentId),
-      );
-    } catch (requestError) {
-      setError(requestError.message);
-    }
+  function removeComment(commentId) {
+    deleteCommentMutation.mutate(commentId);
   }
 
+  const dashboard = dashboardQuery.data;
+  const comments = commentsQuery.data?.comments || [];
+  const error =
+    dashboardQuery.error?.message ||
+    commentsQuery.error?.message ||
+    updateCommentMutation.error?.message ||
+    deleteCommentMutation.error?.message;
   const remotePosts = [
     ...(dashboard?.publishedPosts || []),
     ...(dashboard?.draftPosts || []),
@@ -150,7 +117,9 @@ function Admin() {
                   <span className="post-meta">{post.status}</span>
                 </article>
               ))
-            : "Loading dashboard..."}
+            : dashboardQuery.isLoading
+              ? "Loading dashboard..."
+              : "No posts yet."}
         </div>
 
         <section className="comments-panel">
@@ -160,6 +129,7 @@ function Admin() {
           </div>
 
           <div className="comment-list max-h-96 overflow-y-auto">
+            {commentsQuery.isLoading ? <p>Loading comments...</p> : null}
             {comments.length ? (
               comments.map((comment) => (
                 <article key={comment._id}>
@@ -171,12 +141,14 @@ function Admin() {
                   <div>
                     <button
                       type="button"
+                      disabled={updateCommentMutation.isPending}
                       onClick={() => setCommentStatus(comment._id, "approved")}
                     >
                       Approve
                     </button>
                     <button
                       type="button"
+                      disabled={updateCommentMutation.isPending}
                       onClick={() =>
                         setCommentStatus(comment._id, "unapproved")
                       }
@@ -185,6 +157,7 @@ function Admin() {
                     </button>
                     <button
                       type="button"
+                      disabled={updateCommentMutation.isPending}
                       onClick={() => setCommentStatus(comment._id, "hidden")}
                     >
                       Hide
@@ -192,6 +165,7 @@ function Admin() {
                     <button
                       type="button"
                       className="danger-action"
+                      disabled={deleteCommentMutation.isPending}
                       onClick={() => removeComment(comment._id)}
                     >
                       Delete
@@ -199,7 +173,7 @@ function Admin() {
                   </div>
                 </article>
               ))
-            ) : (
+            ) : commentsQuery.isLoading ? null : (
               <p>No comments yet.</p>
             )}
           </div>
