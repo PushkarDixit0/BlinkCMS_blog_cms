@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm, useWatch } from "react-hook-form";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Dialog } from "@skeletonlabs/skeleton-react";
 import { Mark, mergeAttributes } from "@tiptap/core";
@@ -12,15 +14,16 @@ import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import Image from "@tiptap/extension-image";
 import StarterKit from "@tiptap/starter-kit";
 import { all, createLowlight } from "lowlight";
-import {
-  createPost,
-  deletePost,
-  getEditorPost,
-  toApiUrl,
-  updatePost,
-  uploadEditorAsset,
-} from "../api";
+import { toApiUrl } from "../api/client.js";
 import { deleteStoredPost, getStoredPost } from "../blogStore";
+import {
+  useCreatePost,
+  useDeletePost,
+  useEditorPost,
+  useUpdatePost,
+} from "../hooks/usePosts";
+import { useUploadImage } from "../hooks/useUploads";
+import { postFormSchema } from "../schemas/post.schema";
 
 const lowlight = createLowlight(all);
 const blankContent = {
@@ -190,8 +193,21 @@ function Editor() {
       postId ? getStoredPost(postId) || location.state?.post || null : null,
     [location.state, postId],
   );
-  const [title, setTitle] = useState(initialPost?.title || "");
-  const [status, setStatus] = useState(initialPost?.status || "draft");
+  const {
+    formState: { errors },
+    register,
+    control,
+    setValue,
+    trigger,
+  } = useForm({
+    resolver: zodResolver(postFormSchema),
+    defaultValues: {
+      title: initialPost?.title || "",
+      status: initialPost?.status || "draft",
+      tags: initialPost?.tags || [],
+    },
+  });
+  const title = useWatch({ control, name: "title" }) || "";
   const [tags, setTags] = useState(initialPost?.tags || []);
   const [tagDraft, setTagDraft] = useState("");
   const [fontSize, setFontSize] = useState("");
@@ -206,6 +222,14 @@ function Editor() {
   const uploadInputRef = useRef(null);
   const activeUploadKeysRef = useRef(new Set());
   const recentUploadKeysRef = useRef(new Set());
+  const editorPostQuery = useEditorPost(
+    postId,
+    Boolean(postId && !initialPost),
+  );
+  const createPostMutation = useCreatePost();
+  const updatePostMutation = useUpdatePost(savedPostId);
+  const deletePostMutation = useDeletePost();
+  const uploadImageMutation = useUploadImage();
 
   const editor = useEditor({
     extensions: [
@@ -235,43 +259,29 @@ function Editor() {
   });
 
   useEffect(() => {
-    let isCurrent = true;
+    const post = editorPostQuery.data?.post;
 
-    if (!postId || initialPost || !editor) {
-      return () => {
-        isCurrent = false;
-      };
-    }
+    if (!post || !editor) return;
 
-    getEditorPost(postId)
-      .then((data) => {
-        const post = data?.post;
-        if (!isCurrent || !post) return;
+    setValue("title", post.title || "");
+    setValue("status", post.status || "draft");
+    setValue("tags", post.tags || []);
+    // The editor needs to hydrate local metadata once the remote post arrives.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTags(post.tags || []);
+    setSavedPostId(post._id || "");
+    editor.commands.setContent(post.contentJson || post.content || blankContent);
+  }, [editor, editorPostQuery.data, setValue]);
 
-        setTitle(post.title || "");
-        setStatus(post.status || "draft");
-        setTags(post.tags || []);
-        setSavedPostId(post._id || "");
-        editor.commands.setContent(
-          post.contentJson || post.content || blankContent,
-        );
-      })
-      .catch((requestError) => {
-        if (isCurrent) {
-          setSaveError(requestError.message);
-        }
-      });
-
-    return () => {
-      isCurrent = false;
-    };
-  }, [editor, initialPost, postId]);
+  useEffect(() => {
+    setValue("tags", tags);
+  }, [setValue, tags]);
 
   function buildPost(nextStatus) {
     const html = editor?.getHTML() || "";
     return {
       _id: savedPostId || undefined,
-      title: title.trim() || "Untitled post",
+      title: title.trim(),
       content: html,
       contentJson: editor?.getJSON() || blankContent,
       status: nextStatus,
@@ -281,6 +291,13 @@ function Editor() {
   }
 
   async function persist(nextStatus) {
+    setValue("status", nextStatus);
+    const isValid = await trigger();
+
+    if (!isValid) {
+      return;
+    }
+
     setIsSaving(true);
     setSaveError("");
     setSaveMessage("");
@@ -289,8 +306,8 @@ function Editor() {
       const payload = buildPost(nextStatus);
       const shouldUpdateRemotePost = isMongoObjectId(savedPostId);
       const data = shouldUpdateRemotePost
-        ? await updatePost(savedPostId, payload)
-        : await createPost(payload);
+        ? await updatePostMutation.mutateAsync(payload)
+        : await createPostMutation.mutateAsync(payload);
       const savedPost = data?.post;
 
       if (!shouldUpdateRemotePost && savedPostId) {
@@ -298,7 +315,7 @@ function Editor() {
       }
 
       setSavedPostId(savedPost?._id || savedPostId);
-      setStatus(savedPost?.status || nextStatus);
+      setValue("status", savedPost?.status || nextStatus);
       setSaveMessage(
         (savedPost?.status || nextStatus) === "published"
           ? "Post published."
@@ -365,7 +382,7 @@ function Editor() {
 
         activeUploadKeysRef.current.add(uploadKey);
 
-        const data = await uploadEditorAsset(file);
+        const data = await uploadImageMutation.mutateAsync(file);
         const assetUrl = data?.asset?.url;
 
         if (!assetUrl) {
@@ -403,7 +420,7 @@ function Editor() {
 
     try {
       if (isMongoObjectId(savedPostId)) {
-        await deletePost(savedPostId);
+        await deletePostMutation.mutateAsync(savedPostId);
       } else {
         deleteStoredPost(savedPostId);
       }
@@ -439,6 +456,9 @@ function Editor() {
             <span className="save-message">{saveMessage}</span>
           ) : null}
           {saveError ? <span className="form-error">{saveError}</span> : null}
+          {editorPostQuery.error ? (
+            <span className="form-error">{editorPostQuery.error.message}</span>
+          ) : null}
           <button
             type="button"
             className="secondary-action"
@@ -464,10 +484,12 @@ function Editor() {
         <div className="editor-main">
           <input
             className="title-input"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
             placeholder="Post title"
+            {...register("title")}
           />
+          {errors.title ? (
+            <span className="field-error">{errors.title.message}</span>
+          ) : null}
 
           <div className="editor-toolbar" aria-label="Editor formatting">
             <select
@@ -523,13 +545,13 @@ function Editor() {
         <aside className="editor-sidebar">
           <label>
             Status
-            <select
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-            >
+            <select {...register("status")}>
               <option value="draft">Draft</option>
               <option value="published">Published</option>
             </select>
+            {errors.status ? (
+              <span className="field-error">{errors.status.message}</span>
+            ) : null}
           </label>
 
           <div className="metadata-group">
