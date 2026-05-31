@@ -47,7 +47,7 @@ function Admin() {
   return (
     <main className="admin-page">
       <section className="admin-header">
-        <div>
+        <div className="flex flex-col justify-between gap-5">
           <p className="eyebrow">Protected Area</p>
           <h1>Admin Page</h1>
           <p className="auth-copy">
@@ -56,14 +56,14 @@ function Admin() {
           </p>
         </div>
 
-        <button type="button" onClick={handleLogout}>
+        <button type="button" className="size-28" onClick={handleLogout}>
           Log out
         </button>
       </section>
 
       {error ? <p className="form-error">{error}</p> : null}
 
-      <section className="dashboard-panel">
+      <section className="dashboard-panel py-5">
         <div className="dashboard-totals">
           <span>All: {(dashboard?.totals?.all ?? 0) + storedPosts.length}</span>
           <span>

@@ -1,13 +1,13 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { getAuthState } from "../auth";
 import { useLogin } from "../hooks/useAuth";
 import { loginFormSchema } from "../schemas/auth.schema";
-
 const fallbackMessages = {
   "invalid-session": "Your session is missing or expired. Please log in again.",
-  "invalid-token": "Your security token is missing or invalid. Please log in again.",
+  "invalid-token":
+    "Your security token is missing or invalid. Please log in again.",
 };
 
 function Login() {
@@ -39,9 +39,10 @@ function Login() {
   }
 
   return (
-    <main className="auth-page">
+    <main className="auth-page flex  justify-between p-10">
+      <Link to={"/"}>{"< Back"}</Link>
       <form className="login-panel" onSubmit={handleSubmit(onSubmit)}>
-        <div>
+        <div className="flex flex-col justify-between gap-5">
           <p className="eyebrow">Admin Access</p>
           <h1>Sign in</h1>
           <p className="auth-copy">
@@ -82,6 +83,7 @@ function Login() {
           {loginMutation.isPending ? "Logging in..." : "Log in"}
         </button>
       </form>
+      <div></div>
     </main>
   );
 }
