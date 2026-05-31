@@ -88,38 +88,23 @@ export function getAuthState() {
   };
 }
 
-export function saveAuthSession({ token, user }) {
+export function saveAuthSession({ token, user, session }) {
   if (!isTokenValid(token)) {
     clearAuthSession();
     return false;
   }
 
-  const session = {
+  const savedSession = {
     isAuthenticated: true,
+    id: session?.id,
     user,
-    expiresAt: Date.now() + SESSION_DURATION_MS,
+    expiresAt: session?.expiresAt
+      ? new Date(session.expiresAt).getTime()
+      : Date.now() + SESSION_DURATION_MS,
   };
 
-  sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+  sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(savedSession));
   localStorage.setItem(TOKEN_STORAGE_KEY, token);
 
   return true;
-}
-
-export function createDemoJwt(username) {
-  const nowInSeconds = Math.floor(Date.now() / 1000);
-  const header = { alg: "none", typ: "JWT" };
-  const payload = {
-    sub: username,
-    role: "admin",
-    iat: nowInSeconds,
-    exp: nowInSeconds + SESSION_DURATION_MS / 1000,
-  };
-  const encode = (value) =>
-    btoa(JSON.stringify(value))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-
-  return `${encode(header)}.${encode(payload)}.demo-signature`;
 }
