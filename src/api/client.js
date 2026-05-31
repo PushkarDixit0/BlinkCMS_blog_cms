@@ -1,8 +1,10 @@
 import axios from "axios";
 import { clearAuthSession, getAuthState } from "../auth";
 
+const configuredApiUrl = import.meta.env.VITE_API_URL;
+
 export const API_BASE_URL = (
-  import.meta.env.VITE_API_URL || "http://localhost:5000"
+  configuredApiUrl || ""
 ).replace(/\/+$/, "");
 
 export function toApiUrl(path) {
@@ -30,6 +32,7 @@ apiClient.interceptors.request.use((config) => {
   if (authState.isAuthenticated) {
     config.headers.Authorization = `Bearer ${authState.token}`;
     config.headers["X-Session-Id"] = authState.session.id;
+    config.headers["X-Session-Token"] = authState.session.token;
   }
 
   if (config.data instanceof FormData) {

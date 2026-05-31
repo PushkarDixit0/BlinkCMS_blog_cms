@@ -56,6 +56,8 @@ function getSession() {
 function isSessionValid(session) {
   return Boolean(
     session?.isAuthenticated &&
+      typeof session.token === "string" &&
+      session.token.length > 0 &&
       typeof session.expiresAt === "number" &&
       session.expiresAt > Date.now(),
   );
@@ -97,6 +99,7 @@ export function saveAuthSession({ token, user, session }) {
   const savedSession = {
     isAuthenticated: true,
     id: session?.id,
+    token: session?.token,
     user,
     expiresAt: session?.expiresAt
       ? new Date(session.expiresAt).getTime()
